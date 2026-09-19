@@ -29,14 +29,20 @@ app.get('/', (req, res) => res.send('Snake.IO game server is running.'));
 app.get('/health', (req, res) => res.json({ ok: true, players: Object.keys(players).length }));
 
 // ── CONSTANTS (mirrors the client's values so physics/sizing agree) ──
-const WW = 12000, WH = 12000;
+// IMPORTANT: these were previously tuned for a "huge unlimited map" request
+// (12000x12000, 1100+ food items, 10 bots, 20 broadcasts/sec). That workload
+// was too heavy for Railway's free/trial tier RAM+CPU limit, which is why the
+// server kept getting "Killed" (out-of-memory) and crashing — every player's
+// game would freeze whenever that happened. These numbers are now sized to
+// comfortably fit a small free-tier instance while still feeling spacious.
+const WW = 6000, WH = 6000;
 const SEG_R = 11, HEAD_R = 14;
 const BASE_SPD = 2.6, BOOST_SPD = 5.0;
-const FOOD_N = 1100, SPEC_N = 70, PU_N = 20;
-const BOT_N = 10;
+const FOOD_N = 260, SPEC_N = 20, PU_N = 8;
+const BOT_N = 6;
 const GROWTH_CAP = 1.35, GROWTH_AT = 260;
-const TICK_HZ = 30;           // server steps the simulation 30x/second
-const BROADCAST_HZ = 20;      // world snapshot sent to clients 20x/second
+const TICK_HZ = 20;           // server steps the simulation 20x/second (was 30 — lighter CPU load)
+const BROADCAST_HZ = 12;      // world snapshot sent to clients 12x/second (was 20 — much less bandwidth/CPU per tick)
 const WALL_MARGIN = 30;
 
 function growthFactor(len) { return 1 + (GROWTH_CAP - 1) * (1 - Math.exp(-len / GROWTH_AT)); }
@@ -251,8 +257,13 @@ function killSnake(sn, killer) {
     killer.score += Math.floor(sn.segs.length * 1.6);
     killer.kills++;
   }
-  // scatter some of the dead snake's length as food
-  for (let i = 0; i < sn.segs.length; i += 3) {
+  // Scatter some of the dead snake's length as food. Capped against a hard
+  // ceiling — this was previously uncapped, so on a server that stays up for
+  // a while with many deaths, the foods array grew without bound (nothing
+  // ever removes food that isn't eaten), eventually exhausting memory. That's
+  // what caused the "Killed" crashes in the Railway logs.
+  const FOOD_HARD_CAP = FOOD_N * 2;
+  for (let i = 0; i < sn.segs.length && foods.length < FOOD_HARD_CAP; i += 3) {
     const t = sn.segs[i];
     const fc = FOOD_COLORS[i % FOOD_COLORS.length];
     foods.push({ id: nextFoodId++, x: t.x, y: t.y, r: rand(6, 9), val: 6, color: fc.c, glow: fc.g });
@@ -298,6 +309,10 @@ function tick() {
   Object.values(players).forEach(p => { if (p.alive) { moveSnake(p); eatFor(p); } });
   updateBots();
   checkCollisions();
+  // Safety net: if foods ever creeps above a sane ceiling for any reason,
+  // trim the oldest entries back down. Cheap insurance against the kind of
+  // slow memory growth that previously crashed the server.
+  if (foods.length > FOOD_N * 2.2) foods.splice(0, foods.length - FOOD_N * 2);
 }
 setInterval(tick, 1000 / TICK_HZ);
 
@@ -306,10 +321,18 @@ function snapshot() {
   const all = { ...players, ...bots };
   const out = {};
   Object.values(all).forEach(sn => {
+    // Cap how many segments get sent over the wire. A very long snake doesn't
+    // need every trailing point broadcast to look right — this keeps payload
+    // size (and therefore CPU/bandwidth) roughly constant even as snakes grow,
+    // instead of scaling up with every player's length on every single tick.
+    const MAX_SENT_SEGS = 120;
+    const segs = sn.segs.length > MAX_SENT_SEGS
+      ? sn.segs.filter((_, i) => i < 20 || i % 2 === 0).slice(0, MAX_SENT_SEGS)
+      : sn.segs;
     out[sn.id] = {
       name: sn.name, color: sn.color, skin: sn.skin, alive: sn.alive,
       score: sn.score, kills: sn.kills,
-      segs: sn.segs, // full segment list — the server is the only source of truth now
+      segs,
       pu_speed: sn.pu_speed, pu_shield: sn.pu_shield, pu_magnet: sn.pu_magnet, pu_star: sn.pu_star
     };
   });

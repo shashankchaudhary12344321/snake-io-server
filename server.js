@@ -75,15 +75,15 @@ function addFood() {
   foods.push({
     id: nextFoodId++, x: rand(80, WW - 80), y: rand(80, WH - 80),
     r: rand(5, 9), val: Math.floor(Math.random() * 8) + 2,
-    color: fc.c, glow: fc.g
+    color: fc.c, glow: fc.g, pulse: Math.random() * Math.PI * 2
   });
 }
 function foods_special_push() {
-  specFoods.push({ id: nextFoodId++, x: rand(80, WW - 80), y: rand(80, WH - 80), r: 11, val: 30 });
+  specFoods.push({ id: nextFoodId++, x: rand(80, WW - 80), y: rand(80, WH - 80), r: 11, val: 30, phase: Math.random() * Math.PI * 2 });
 }
 function addPU() {
   const types = ['speed', 'shield', 'magnet', 'star'];
-  powerUps.push({ id: nextPuId++, x: rand(80, WW - 80), y: rand(80, WH - 80), r: 15, type: types[Math.floor(Math.random() * types.length)] });
+  powerUps.push({ id: nextPuId++, x: rand(80, WW - 80), y: rand(80, WH - 80), r: 15, type: types[Math.floor(Math.random() * types.length)], phase: Math.random() * Math.PI * 2 });
 }
 function spawnWorld() {
   for (let i = 0; i < FOOD_N; i++) addFood();
@@ -266,7 +266,7 @@ function killSnake(sn, killer) {
   for (let i = 0; i < sn.segs.length && foods.length < FOOD_HARD_CAP; i += 3) {
     const t = sn.segs[i];
     const fc = FOOD_COLORS[i % FOOD_COLORS.length];
-    foods.push({ id: nextFoodId++, x: t.x, y: t.y, r: rand(6, 9), val: 6, color: fc.c, glow: fc.g });
+    foods.push({ id: nextFoodId++, x: t.x, y: t.y, r: rand(6, 9), val: 6, color: fc.c, glow: fc.g, pulse: Math.random() * Math.PI * 2 });
   }
   const sock = io.sockets.sockets.get(sn.id);
   if (sock) sock.emit('died', { killerName: killer ? killer.name : null, score: sn.score, kills: sn.kills });
